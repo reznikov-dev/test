@@ -34,16 +34,7 @@ func init() {
 }
 
 func main() {
-	counter := 0
-	done := make(chan struct{})
-
-	for url := range fetchStatus(getUrls(), done) {
-
-		counter++
-		if counter == successStatusCount {
-			close(done)
-		}
-
+	for url := range fetchStatus(getUrls()) {
 		fmt.Printf(messageTemplate, url)
 	}
 }
@@ -62,17 +53,13 @@ func getUrls() <-chan string {
 	return urlsChan
 }
 
-func fetchStatus(fetchUrl <-chan string, done chan struct{}) <- chan string  {
+func fetchStatus(fetchUrl <-chan string) <- chan string  {
 	successUrlChan := make(chan string)
+	var counter int
 
 	go func() {
 		for {
 			select {
-			case <- done :
-				close(successUrlChan)
-				fmt.Printf("get ok result expected count %d", successStatusCount)
-				return
-
 			case url, ok := <-fetchUrl:
 				if !ok {
 					close(successUrlChan)
@@ -81,6 +68,13 @@ func fetchStatus(fetchUrl <-chan string, done chan struct{}) <- chan string  {
 				}
 
 				if resp, err := client.Get(url); err == nil && resp.StatusCode == http.StatusOK {
+					counter++
+					if counter > successStatusCount {
+						close(successUrlChan)
+						fmt.Printf("get ok result expected count %d", successStatusCount)
+						return
+					}
+
 					successUrlChan <- url
 				}
 			}
