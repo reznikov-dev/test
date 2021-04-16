@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -35,63 +34,59 @@ func init() {
 }
 
 func main() {
-	successStatusUrl := make(chan string)
-	attemptsLimit := make(chan struct{}, successStatusCount)
-
-	done := make(chan struct{})
-	allHandled := make(chan struct{})
-
-	var wg sync.WaitGroup
-
-	for _, url := range urls {
-		wg.Add(1)
-		go getStatus(url, successStatusUrl, attemptsLimit, done, &wg)
-	}
-
-	go func() {
-		wg.Wait()
-		close(allHandled)
-	}()
-
 	counter := 0
+	done := make(chan struct{})
 
-	for {
-		select {
-		case <- allHandled:
-			//кейс когда не будет 2 удачных ответа
-			fmt.Println("All urls handled")
-			return
-		case url := <-successStatusUrl:
-			counter++
-			fmt.Printf(messageTemplate, url)
+	for url := range fetchStatus(getUrls(), done) {
 
-			if counter == successStatusCount {
-				close(done)
-
-				time.Sleep(1 * time.Second) // таймаут чтобы дождаться сообщений о выходе из горутин
-				fmt.Println("Get two ok results")
-				return
-			}
+		counter++
+		if counter == successStatusCount {
+			close(done)
 		}
+
+		fmt.Printf(messageTemplate, url)
 	}
 }
 
-func getStatus(url string, successUrlChan chan<-string, attemptsLimit chan struct{}, done <-chan struct{}, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for {
-		select {
-		case <-done:
-			fmt.Println("close from outside routine with url " + url)
-			return
-		case attemptsLimit <- struct{}{}:
-			if resp, err := client.Get(url); err == nil && resp.StatusCode == http.StatusOK {
-				successUrlChan <- url
-				return
-			}
+func getUrls() <-chan string {
+	urlsChan := make(chan string)
 
-			_ = <-attemptsLimit //освобождаем в случае неудачи
-			return
+	go func() {
+		for _, url := range urls {
+			urlsChan <- url
 		}
-	}
+
+		close(urlsChan)
+	}()
+
+	return urlsChan
+}
+
+func fetchStatus(fetchUrl <-chan string, done chan struct{}) <- chan string  {
+	successUrlChan := make(chan string)
+
+	go func() {
+		for {
+			select {
+			case <- done :
+				close(successUrlChan)
+				fmt.Printf("get ok result expected count %d", successStatusCount)
+				return
+
+			case url, ok := <-fetchUrl:
+				if !ok {
+					close(successUrlChan)
+					fmt.Println("all urls handled")
+					return
+				}
+
+				if resp, err := client.Get(url); err == nil && resp.StatusCode == http.StatusOK {
+					successUrlChan <- url
+				}
+			}
+		}
+	}()
+
+	return successUrlChan
 }
 
